@@ -1,5 +1,6 @@
 import http.client
 import json
+import struct
 import sys
 import threading
 import time
@@ -65,8 +66,23 @@ class HttpTests(unittest.TestCase):
             response = conn.getresponse()
             self.assertEqual(response.status, 200)
             self.assertIn('流声', response.read().decode())
+            for path, (filename, content_type) in server.STATIC_FILES.items():
+                with self.subTest(path=path):
+                    conn.request('GET', path + '?pwa-test=1')
+                    response = conn.getresponse()
+                    self.assertEqual(response.status, 200)
+                    self.assertEqual(response.getheader('Content-Type'), content_type)
+                    self.assertEqual(response.read(), (server.ROOT / filename).read_bytes())
+            manifest = json.loads((server.ROOT / 'manifest.webmanifest').read_text())
+            self.assertEqual(manifest['display'], 'standalone')
+            for icon in manifest['icons']:
+                png = (server.ROOT / icon['src'].lstrip('/')).read_bytes()
+                self.assertEqual(png[:8], b'\x89PNG\r\n\x1a\n')
+                dimensions = struct.unpack('>II', png[16:24])
+                self.assertEqual('x'.join(map(str, dimensions)), icon['sizes'])
             conn.request('GET', '/api/status')
             response = conn.getresponse()
+            self.assertEqual(response.getheader('Cache-Control'), 'no-store')
             self.assertTrue(json.loads(response.read())['ok'])
             for payload in ({'text': ''}, {'text': '\ud800'}, {'text': '\x00'}, [], {'text': 'hi', 'paste_mode': []}):
                 conn.request('POST', '/api/send', json.dumps(payload))

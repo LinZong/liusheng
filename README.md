@@ -119,3 +119,16 @@ systemctl --user disable --now niri-voice-input.service
 ```
 
 执行 `python3 -m unittest -v` 可运行回归测试；测试不会触发真实粘贴。
+
+## 安装到手机桌面（PWA）
+
+用手机浏览器打开 **https://voice.lleo.fun**：
+
+- Android Chrome：浏览器菜单 →「添加到主屏幕」或「安装应用」。
+- iPhone Safari：分享 →「添加到主屏幕」。
+
+从桌面图标打开后，以独立应用窗口显示。PWA 安装和离线缓存需要 HTTPS（本机开发可用 localhost）；通过局域网 IP 的普通 HTTP 地址仍可使用网页输入。
+
+首次联网访问后会缓存页面和图标，断网时仍可打开页面、编辑和保留草稿。发送文字和检测 Linux 状态需要连接服务；断网不会排队发送，恢复连接后也不会自动补发。
+
+Service Worker 对页面优先请求网络，离线时使用缓存，不缓存 API。更新离线资源清单时请递增 `sw.js` 中的缓存版本。执行 `node --test test_sw.mjs` 可验证离线回退和 API 不缓存的行为。
