@@ -3,10 +3,9 @@
 
 import argparse
 import json
-import os
 import shutil
 import subprocess
-import sys
+import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -52,22 +51,31 @@ def paste_shortcut(app_id, mode):
     if mode == "terminal":
         return "terminal"
     app = (app_id or "").lower()
-    return "terminal" if any(part in app for part in TERMINAL_APP_IDS) else "normal"
+    is_terminal = any(
+        app == part or app.startswith(part + "-") or app.startswith(part + ".")
+        or app.endswith("." + part)
+        for part in TERMINAL_APP_IDS
+    )
+    return "terminal" if is_terminal else "normal"
 
 
 def run_command(args, *, input_data=None):
     try:
-        result = subprocess.run(
-            args, input=input_data, text=True, capture_output=True,
-            timeout=4, check=False,
-        )
+        # wl-copy forks a clipboard owner that inherits its output descriptors.
+        # Pipes make communicate() wait for that owner and falsely time out.
+        with tempfile.TemporaryFile(mode="w+t", encoding="utf-8") as output:
+            result = subprocess.run(
+                args, input=input_data, text=True, stdout=output, stderr=output,
+                timeout=4, check=False,
+            )
+            output.seek(0)
+            detail = output.read(4096).strip()
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(f"命令执行超时：{args[0]}") from exc
     except OSError as exc:
         raise RuntimeError(f"无法执行 {args[0]}：{exc}") from exc
     if result.returncode:
-        detail = (result.stderr or result.stdout or "未知错误").strip()
-        raise RuntimeError(f"{args[0]} 执行失败：{detail[:400]}")
+        raise RuntimeError(f"{args[0]} 执行失败：{(detail or '未知错误')[:400]}")
 
 
 def emit_paste(backend, mode):
@@ -91,27 +99,25 @@ def deliver(text, paste_mode, configured_backend):
         raise ValueError("不能发送空文本")
     if len(text) > MAX_TEXT:
         raise ValueError(f"文字过长，最多 {MAX_TEXT} 字符")
+    if "\x00" in text:
+        raise ValueError("文字不能包含空字符")
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise ValueError("文字包含无效的 Unicode 字符") from exc
     if not shutil.which("wl-copy"):
         raise RuntimeError("未安装 wl-copy：请安装 wl-clipboard")
 
-    target = focused_window()
-    # Do not guess an app's focus from the phone. The compositor's focus at send time is used.
-    detected = paste_shortcut((target or {}).get("app_id"), paste_mode)
     backend = get_backend(configured_backend)
     if backend is None:
         raise RuntimeError("未安装输入工具：请安装 wtype（或备用 ydotool）")
 
     with PASTE_LOCK:
-        run_command(["wl-copy"], input_data=text)
-        # If wtype fails, a configured auto backend may try ydotool as a fallback.
-        try:
-            emit_paste(backend, detected)
-        except RuntimeError as first_error:
-            if configured_backend == "auto" and backend == "wtype" and shutil.which("ydotool"):
-                emit_paste("ydotool", detected)
-                backend = "ydotool"
-            else:
-                raise first_error
+        target = focused_window()
+        detected = paste_shortcut((target or {}).get("app_id"), paste_mode)
+        run_command(["wl-copy", "--type", "text/plain;charset=utf-8"], input_data=text)
+        # A failure may follow partial execution; don't risk pasting twice.
+        emit_paste(backend, detected)
 
     return {"ok": True, "backend": backend, "paste_mode": detected,
             "target": target, "message": "已发送粘贴快捷键（无法确认目标应用是否实际插入）"}

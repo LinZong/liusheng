@@ -1,0 +1,16 @@
+[Unit]
+Description=流声 Niri phone voice input
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+Environment="PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin"
+Environment=PYTHONUNBUFFERED=1
+WorkingDirectory=%h/projects/niri-voice-input
+ExecStart=/usr/bin/python3 %h/projects/niri-voice-input/server.py --host 0.0.0.0 --port 8765
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=graphical-session.target

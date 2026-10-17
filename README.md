@@ -82,7 +82,7 @@ wtype -M ctrl -k v -m ctrl
 python3 server.py --host 0.0.0.0 --port 8765 --backend auto
 ```
 
-`--backend auto` 默认优先 `wtype`，失败且安装了 `ydotool` 时才尝试后者，也可以强制指定 `--backend wtype` 或 `--backend ydotool`。
+`--backend auto` 根据已安装工具优先选择 `wtype`，未安装时选择 `ydotool`；执行失败后不会自动改用另一后端，以避免重复粘贴。也可以强制指定 `--backend wtype` 或 `--backend ydotool`。
 
 ## 已知限制
 
@@ -95,3 +95,27 @@ python3 server.py --host 0.0.0.0 --port 8765 --backend auto
 ## 手机页面
 
 简洁布局保留了连接状态、当前目标窗口、发送进度和发送结果（包括失败原因），同时提供文本编辑区、清空按钮和发送按钮。发送成功后自动清空文本，失败时保留草稿；输入的文字临时保存在本机浏览器。注意“已发送”表示系统已触发粘贴，并非已确认目标控件成功插入。
+
+## 本机用户服务
+
+仓库位于 `~/projects/niri-voice-input` 时，可在 Niri 桌面终端安装用户服务（其他路径请先修改 service 文件中的路径）：
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp niri-voice-input.service ~/.config/systemd/user/
+systemctl --user import-environment WAYLAND_DISPLAY NIRI_SOCKET
+systemctl --user daemon-reload
+systemctl --user enable --now niri-voice-input.service
+```
+
+服务随图形会话启动、退出时停止，异常退出时自动重启。手机访问 `http://Linux局域网IP:8765`。
+
+```bash
+systemctl --user status niri-voice-input.service
+journalctl --user -u niri-voice-input.service -n 50
+systemctl --user restart niri-voice-input.service
+# 停止并取消自动启动
+systemctl --user disable --now niri-voice-input.service
+```
+
+执行 `python3 -m unittest -v` 可运行回归测试；测试不会触发真实粘贴。

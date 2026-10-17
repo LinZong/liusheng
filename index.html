@@ -135,11 +135,22 @@
       draft.addEventListener('input', () => { delivery = null; update(); });
       clear.addEventListener('click', () => { draft.value = ''; delivery = null; update(); draft.focus(); });
 
+      async function timedFetch(url, options, milliseconds) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), milliseconds);
+        try {
+          const response = await fetch(url, { ...options, signal:controller.signal });
+          const data = await response.json();
+          return { response, data };
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+
       async function check() {
         try {
-          const res = await fetch('/api/status', { cache:'no-store', signal:AbortSignal.timeout(2300) });
+          const { response:res, data } = await timedFetch('/api/status', { cache:'no-store' }, 3500);
           if (!res.ok) throw Error('offline');
-          const data = await res.json();
           ready = Boolean(data.clipboard && data.backend);
           connectionProblem = ready ? '' : 'Linux 缺少输入组件';
           connection.className = 'connection ' + (ready ? 'ok' : 'bad');
@@ -164,18 +175,16 @@
         update();
         const content = draft.value;
         try {
-          const res = await fetch('/api/send', {
+          const { response:res, data:result } = await timedFetch('/api/send', {
             method:'POST', headers:{ 'Content-Type':'application/json' },
-            body:JSON.stringify({ text:content, paste_mode:'auto' }),
-            signal:AbortSignal.timeout(8000)
-          });
-          const result = await res.json();
+            body:JSON.stringify({ text:content, paste_mode:'auto' })
+          }, 20000);
           if (!res.ok || !result.ok) throw Error(result.message || '发送失败');
           if (draft.value === content) draft.value = '';
           delivery = { error:false, text:'已发送 · 已触发 Linux 粘贴' };
           if (result.target) updateTarget(result.target);
         } catch (err) {
-          delivery = { error:true, text:'发送失败 · ' + (err.message || '请重试') };
+          delivery = { error:true, text:'未确认发送结果 · 请先检查 Linux 输入框，再决定是否重试（' + (err.message || '连接异常') + '）' };
         } finally {
           sending = false;
           sendText.textContent = '发送';
