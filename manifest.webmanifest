@@ -1,8 +1,8 @@
 {
   "id": "/",
-  "name": "流声 · Niri 手机语音输入",
+  "name": "流声 · 手机语音输入",
   "short_name": "流声",
-  "description": "用手机语音输入，将文字发送到 Linux 当前输入框。",
+  "description": "用手机语音输入，将文字发送到 Linux 或 macOS 当前输入框。",
   "lang": "zh-CN",
   "start_url": "/",
   "scope": "/",

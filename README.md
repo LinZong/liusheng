@@ -1,10 +1,38 @@
-# 流声 · Niri 手机语音输入
+# Liusheng (流声)
 
-面向 **Niri Wayland + Fcitx5** 的最小可用版本：手机打开网页，用任意手机键盘的语音输入功能识别文字，点击发送后，文字通过 Linux 剪贴板和模拟快捷键粘贴到当前聚焦位置。
+**Use your phone's keyboard or voice input to type on your computer.**
 
-## 1. 安装依赖
+[中文文档](README.zh-CN.md) · [MIT License](LICENSE)
 
-你只需要 **Python 3 + wl-clipboard + wtype**，无需 Python pip 安装：
+Open the web page on your phone, dictate with your phone keyboard, and send the recognized text to the focused input on **Niri/Wayland Linux or macOS**. The server uses the desktop clipboard and simulated keyboard shortcuts. No Python packages, browser microphone access, or native phone app are required.
+
+## Features
+
+- Unicode text input, including Chinese, emoji, and multiple lines.
+- A compact toolbar: send text, **send text + Return**, or send text + Control+Return.
+- Return is the main button. With an empty draft, Return and Control+Return send only the key.
+- One-tap phrases: `确定` (Confirm), `推送代码` (Push code), and `创建 PR` (Create PR). Each sends its phrase followed by Return and preserves your draft.
+- Current target app, connection status, and delivery feedback.
+- Local draft storage and an installable PWA with an offline editor.
+
+The mobile UI is currently in Chinese. Voice recognition is provided by your phone keyboard; Liusheng receives the resulting text.
+
+## Requirements
+
+| Desktop | Requirements | Paste shortcut |
+| --- | --- | --- |
+| Linux with Niri/Wayland | Python 3, `wl-clipboard`, `wtype` | Ctrl+V; Ctrl+Shift+V for recognized terminals |
+| macOS | Python 3, built-in `pbcopy` and `osascript`, Accessibility and Automation permissions | Command+V, including terminals |
+
+Linux can use `ydotool` instead of `wtype`; configure and authorize `ydotoold` separately. Other Wayland compositors may work but are not verified; target detection is specific to Niri. X11 and Windows are not supported.
+
+The macOS backend has automated tests using mocked system commands. Real macOS input, app compatibility, and permission prompts still need validation on a Mac.
+
+## Quick start
+
+### 1. Install dependencies
+
+On Linux, use the command for your distribution:
 
 ```bash
 # Arch / EndeavourOS
@@ -13,92 +41,69 @@ sudo pacman -S --needed python wl-clipboard wtype
 # Fedora
 sudo dnf install python3 wl-clipboard wtype
 
-# Debian / Ubuntu（若仓库提供这些包）
+# Debian / Ubuntu, if the packages are available
 sudo apt install python3 wl-clipboard wtype
 ```
 
-如果当前 Niri 版本上的 wtype 不工作，可以用 `ydotool` 作为备用（需要单独启动并授权 `ydotoold`）。
+On macOS, install Python 3 if needed (for example, `brew install python` if you already use Homebrew). No `pip` dependencies or Linux input tools are required.
 
-## 2. 启动服务
+### 2. Start the server on the target computer
 
-**从 Niri 桌面内打开的终端执行**（必须继承 `WAYLAND_DISPLAY`、`NIRI_SOCKET` 等会话变量）：
+Download or clone this repository, then run from a terminal inside your desktop login session:
 
 ```bash
 cd niri-voice-input
 python3 server.py
 ```
 
-默认端口 `8765`，局域网可访问。
+On Linux, the terminal must inherit `WAYLAND_DISPLAY` and `NIRI_SOCKET`. On macOS, start from a terminal app you can authorize, such as Terminal or iTerm2; complete the permissions steps below.
 
-查看 Linux IP：
-
-```bash
-hostname -I
-```
-
-手机和 Linux 处于同一个 Wi-Fi/局域网时，在手机浏览器中访问：
+The default address is `0.0.0.0:8765`. Find your computer's LAN IP with `hostname -I` on Linux, or in **System Settings → Network** on macOS. Connect your phone to the same trusted network and open:
 
 ```text
-http://你的Linux局域网IP:8765
+http://<computer-lan-ip>:8765
 ```
 
-## 3. 测试
+### 3. Use it
 
-1. Linux 上打开 VS Code 或浏览器的普通输入框，鼠标点击使其获得输入焦点。
-2. 手机上打开网页，点编辑区，使用手机输入法的麦克风进行语音转写。
-3. 点「发送到 Linux」。文字应该出现在 Linux 当前光标处。
-4. 如果用终端，服务端会尽量通过 Niri 的 `app_id` 自动识别并发送 `Ctrl+Shift+V`。如果终端无法粘贴，请确认终端应用支持该快捷键。
+1. Focus an editable field on your computer, initially in a harmless text editor.
+2. On your phone, type or dictate into the page's editor.
+3. Tap the left paper-plane icon to paste only, the large center **回车 ↵** button to paste and press Return, or the right Control+Return icon for that combination.
+4. Successful requests clear the sent draft; failed or uncertain requests preserve it. Quick phrases always preserve the draft.
 
-注意：Fcitx5 无需修改，手机端发送的是**已识别完成的 Unicode 文本**，通过剪贴板注入，而非模拟中文逐字敲键。
+Whether Return submits or inserts a line break depends on the target app. **Control+Return means the Control key on both platforms; it does not become Command+Return on macOS.**
 
-## 4. 快速排错
+## macOS permissions
 
-首先在 Niri 的终端中运行以下测试，并将焦点移至需要粘贴的输入框：
+The server uses `pbcopy` for text and AppleScript through System Events for fixed key commands. User text is passed to the clipboard through stdin, never interpolated into AppleScript.
 
-```bash
-# 放入剪贴板（运行这条命令后再聚焦目标）
-printf '你好 Niri + Fcitx5' | wl-copy
+1. Start the server from your terminal app and try sending to a text editor from your phone.
+2. Open **System Settings → Privacy & Security → Accessibility** and authorize the app responsible for launching the server, usually your terminal app. Follow the identity named by macOS if it differs.
+3. If prompted to control **System Events**, allow it. Review the corresponding entry under **Privacy & Security → Automation**.
+4. Restart the server if needed, focus the target field, and retry manually after checking whether the previous attempt inserted anything.
 
-# 焦点已在目标输入框时，使用另一个键盘快捷键触发或者使用本工具发送
-# 手动在终端里执行这条命令时，焦点可能回到终端，建议用手机实际测试
-wtype -M ctrl -k v -m ctrl
-```
+See Apple's guides to [Accessibility access](https://support.apple.com/guide/mac-help/allow-accessibility-apps-to-access-your-mac-mh43185/mac) and [UI scripting](https://developer.apple.com/library/archive/documentation/LanguagesUtilities/Conceptual/MacAutomationScriptingGuide/AutomatetheUserInterface.html).
 
-- **页面显示缺少组件**：用 `command -v wl-copy wtype` 检查安装。
-- **网页不能访问**：确认同局域网、IP、端口，以及 Linux 防火墙规则。
-- **网页显示发送成功但没有文字**：成功仅代表执行了粘贴快捷键，不代表目标应用接受它；请检查目标输入框聚焦、终端特殊快捷键，以及 Niri 虚拟键盘兼容性。
-- **Niri + wtype 后物理键盘暂时失效**：部分 Niri 版本有已知 issue。切换窗口焦点可能恢复；可以试备用 `ydotool`：
+“Connected” confirms that required commands are available, not that macOS permissions are granted. Permission failures are reported when sending. App detection shows the frontmost app's name, not its document or window title; detection failures do not prevent sending.
 
-  ```bash
-  # 前提：已安装并正确运行 ydotoold
-  python3 server.py --backend ydotool
-  ```
+Start manually from an authorized terminal first. The included systemd service is Linux-only. Running under a different launcher or a background service can require separate macOS authorization.
 
-- **服务找不到 Niri 焦点窗口**：确认服务是从 Niri 的用户会话内启动，不要通过脱离会话的 root 服务启动。自动快捷键识别依赖 Niri 焦点窗口信息。
-
-## 5. 参数
+## Options
 
 ```bash
 python3 server.py --host 0.0.0.0 --port 8765 --backend auto
 ```
 
-`--backend auto` 根据已安装工具优先选择 `wtype`，未安装时选择 `ydotool`；执行失败后不会自动改用另一后端，以避免重复粘贴。也可以强制指定 `--backend wtype` 或 `--backend ydotool`。
+- `auto`: macOS selects `macos`; Linux prefers `wtype`, then `ydotool`.
+- `macos`: explicitly select the native macOS tools.
+- `wtype` / `ydotool`: explicitly select a Linux backend.
+- `--host 127.0.0.1`: accept local connections only; your phone cannot connect directly.
 
-## 已知限制
+Backend failures are never retried or automatically switched to another backend, because the first attempt may already have inserted text or submitted an action.
 
-- 不读取应用内部光标位置；由 Niri 当前键盘焦点决定注入位置。没有焦点或控件不可编辑时，不能保证成功。
-- 默认会覆盖 Linux 当前剪贴板，暂不自动恢复。
-- 终端中粘贴多行命令可能执行命令；请谨慎对待文本内容。
-- 不含鉴权，适合你指定的**可信局域网**使用，不要暴露到公网。
-- 手机端复用键盘语音输入，不使用浏览器麦克风 API；移动设备无需安装原生 App。
+## Linux user service
 
-## 手机页面
-
-简洁布局保留了连接状态、当前目标窗口、发送进度和发送结果（包括失败原因），同时提供文本编辑区、清空按钮、发送按钮，以及「回车」和「Ctrl+回车」按键按钮。点击「回车」或「Ctrl+回车」时，有文字会先粘贴到 Linux 当前聚焦的控件，再发送对应按键，成功后清空草稿；没有文字时只发送按键。失败时保留草稿，请先检查 Linux 是否已经收到文字再决定是否重试。输入框上方提供「确定」「推送代码」「创建 PR」快捷文本，点击会直接发送该短语并回车，保留现有草稿。具体提交或换行行为由目标应用决定。发送成功后自动清空文本，失败时保留草稿；输入的文字临时保存在本机浏览器。注意“已发送”表示系统已触发粘贴，并非已确认目标控件成功插入。
-
-## 本机用户服务
-
-仓库位于 `~/projects/niri-voice-input` 时，可在 Niri 桌面终端安装用户服务（其他路径请先修改 service 文件中的路径）：
+For a checkout at `~/projects/niri-voice-input`, run inside the Niri desktop session:
 
 ```bash
 mkdir -p ~/.config/systemd/user
@@ -108,27 +113,49 @@ systemctl --user daemon-reload
 systemctl --user enable --now niri-voice-input.service
 ```
 
-服务随图形会话启动、退出时停止，异常退出时自动重启。手机访问 `http://Linux局域网IP:8765`。
+For other checkout locations or Python installations, edit `WorkingDirectory` and `ExecStart` in the service first. The service follows `graphical-session.target`, so your desktop must start and stop that target.
 
 ```bash
 systemctl --user status niri-voice-input.service
 journalctl --user -u niri-voice-input.service -n 50
 systemctl --user restart niri-voice-input.service
-# 停止并取消自动启动
+# Stop and disable automatic startup
 systemctl --user disable --now niri-voice-input.service
 ```
 
-执行 `python3 -m unittest -v` 可运行回归测试；测试不会触发真实粘贴。
+## Phone installation and offline use
 
-## 安装到手机桌面（PWA）
+The LAN HTTP URL works for normal input. To enable service-worker caching and PWA installation where supported, serve **your own instance** over HTTPS (localhost also works for development). Both the page and `/api/*` must reach the same desktop server. Do not expose this unauthenticated server to the public internet.
 
-用手机浏览器打开 **https://voice.lleo.fun**：
+- Android Chrome: use “Install app” or “Add to Home screen,” where available.
+- iPhone Safari: Share → Add to Home Screen.
 
-- Android Chrome：浏览器菜单 →「添加到主屏幕」或「安装应用」。
-- iPhone Safari：分享 →「添加到主屏幕」。
+After an initial online visit in a secure context, the page and icons are cached. You can open the editor and retain drafts offline, but sending and status checks require a live server. Requests are never queued or replayed on reconnection. The service worker uses network-first shell caching and never caches API calls.
 
-从桌面图标打开后，以独立应用窗口显示。PWA 安装和离线缓存需要 HTTPS（本机开发可用 localhost）；通过局域网 IP 的普通 HTTP 地址仍可使用网页输入。
+## Troubleshooting and limits
 
-首次联网访问后会缓存页面和图标，断网时仍可打开页面、编辑和保留草稿。发送文字和检测 Linux 状态需要连接服务；断网不会排队发送，恢复连接后也不会自动补发。
+- **Cannot open the page:** check the LAN IP, network isolation, port, and desktop firewall. Allow incoming access only on your trusted network.
+- **Missing components:** Linux: `command -v wl-copy wtype`; macOS: `command -v python3 pbcopy osascript`.
+- **macOS permission error:** follow the steps above. Authorization must apply to the app that actually launches the server.
+- **Sent but no text:** delivery means commands ran, not that the destination accepted them. Check focus and the app's paste shortcuts. Secure or non-editable fields may reject simulated input.
+- **Linux terminal paste fails:** check whether the app supports Ctrl+Shift+V and whether Niri reports its app ID correctly.
+- **Input problems with Niri/wtype:** try `python3 server.py --backend ydotool` after setting up `ydotoold`.
+- **Return arrives before a slow paste finishes:** there is a short fixed delay between paste and Return, not an application-level acknowledgment. Check the destination before retrying.
+- The desktop clipboard is overwritten and is not restored. Drafts remain in your phone browser's local storage.
+- Sending text and Return into a terminal may execute commands. Keep the intended target focused throughout delivery.
+- **No authentication or TLS is built in. Use only on a trusted network.** Anyone who can reach the service can send text and supported keys to your desktop.
 
-Service Worker 对页面优先请求网络，离线时使用缓存，不缓存 API。更新离线资源清单时请递增 `sw.js` 中的缓存版本。执行 `node --test test_sw.mjs` 可验证离线回退和 API 不缓存的行为。
+## Development
+
+The server uses only the Python standard library. Node.js is needed only for service-worker tests.
+
+```bash
+python3 -m unittest -v
+node --test test_sw.mjs
+```
+
+Input tests mock desktop commands and do not type into your apps. macOS tests verify backend selection, clipboard handling, key modifiers, and permission-error reporting; they do not replace a real Mac smoke test. Increment the cache version in `sw.js` when changing cached resources.
+
+## License
+
+[MIT](LICENSE).

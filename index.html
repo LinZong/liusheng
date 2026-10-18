@@ -214,14 +214,14 @@
           if (!res.ok) throw Error('offline');
           keyReady = Boolean(data.backend);
           ready = Boolean(data.clipboard && data.backend);
-          connectionProblem = ready ? '' : 'Linux 缺少输入组件';
+          connectionProblem = ready ? '' : '电脑缺少输入组件';
           connection.className = 'connection ' + (ready ? 'ok' : 'bad');
           connectionText.textContent = ready ? '已连接' : '缺少组件';
           updateTarget(data.target);
         } catch (_) {
           ready = false;
           keyReady = false;
-          connectionProblem = 'Linux 连接已断开';
+          connectionProblem = '电脑连接已断开';
           connection.className = 'connection bad';
           connectionText.textContent = '未连接';
           updateTarget(null);
@@ -234,7 +234,7 @@
         sending = true;
         delivery = null;
         send.setAttribute('aria-busy', 'true');
-        setStatus('sending', '正在发送到 Linux…');
+        setStatus('sending', '正在发送到电脑…');
         update();
         const content = draft.value;
         try {
@@ -244,10 +244,10 @@
           }, 20000);
           if (!res.ok || !result.ok) throw Error(result.message || '发送失败');
           if (draft.value === content) draft.value = '';
-          delivery = { error:false, text:'已发送 · 已触发 Linux 粘贴' };
+          delivery = { error:false, text:'已发送 · 已触发电脑粘贴' };
           if (result.target) updateTarget(result.target);
         } catch (err) {
-          delivery = { error:true, text:'未确认发送结果 · 请先检查 Linux 输入框，再决定是否重试（' + (err.message || '连接异常') + '）' };
+          delivery = { error:true, text:'未确认发送结果 · 请先检查电脑输入框，再决定是否重试（' + (err.message || '连接异常') + '）' };
         } finally {
           sending = false;
           send.removeAttribute('aria-busy');
@@ -269,10 +269,10 @@
           }, 20000);
           if (!res.ok || !result.ok) throw Error(result.message || '按键发送失败');
           if (quickText === null && content && draft.value === content) draft.value = '';
-          delivery = { error:false, text:content ? '已发送文字并触发 Linux ' + label : '已发送 · 已触发 Linux ' + label };
+          delivery = { error:false, text:content ? '已发送文字并触发电脑端' + label : '已发送 · 已触发电脑端' + label };
           if (result.target) updateTarget(result.target);
         } catch (err) {
-          delivery = { error:true, text:'未确认发送结果 · 请先检查 Linux 输入框，再决定是否重试（' + (err.message || '连接异常') + '）' };
+          delivery = { error:true, text:'未确认发送结果 · 请先检查电脑输入框，再决定是否重试（' + (err.message || '连接异常') + '）' };
         } finally {
           sending = false;
           update();

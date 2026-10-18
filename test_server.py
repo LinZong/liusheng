@@ -1,5 +1,6 @@
 import http.client
 import json
+import subprocess
 import struct
 import sys
 import threading
@@ -11,6 +12,11 @@ import server
 
 
 class DeliveryTests(unittest.TestCase):
+    def setUp(self):
+        platform = patch.object(server.sys, 'platform', 'linux')
+        platform.start()
+        self.addCleanup(platform.stop)
+
     def test_terminal_detection_uses_app_name_boundaries(self):
         for app in ('kitty', 'org.wezfurlong.wezterm', 'gnome-terminal-server', 'org.kde.konsole'):
             self.assertEqual(server.paste_shortcut(app, 'auto'), 'terminal')
@@ -105,7 +111,99 @@ class DeliveryTests(unittest.TestCase):
         emit.assert_called_once()
 
 
+class MacOSTests(unittest.TestCase):
+    def setUp(self):
+        platform = patch.object(server.sys, 'platform', 'darwin')
+        platform.start()
+        self.addCleanup(platform.stop)
+
+    def test_backend_detection_and_missing_native_tool(self):
+        with patch.object(server.shutil, 'which', return_value='/usr/bin/tool'):
+            self.assertEqual(server.get_backend('auto'), 'macos')
+            self.assertEqual(server.get_backend('macos'), 'macos')
+            self.assertIsNone(server.get_backend('wtype'))
+        with patch.object(server.shutil, 'which', side_effect=lambda tool: '/bin/tool' if tool == 'wtype' else None):
+            self.assertIsNone(server.get_backend('auto'))
+        self.assertEqual(server.clipboard_tool(), 'pbcopy')
+        with patch.object(server.sys, 'platform', 'linux'):
+            self.assertIsNone(server.get_backend('macos'))
+
+    def test_unicode_text_only_enters_clipboard_not_script(self):
+        text = '你好 "quoted"\n\\path\n$(touch /tmp/example)'
+        with patch.object(server.shutil, 'which', return_value='/usr/bin/tool'), \
+             patch.object(server, 'focused_window', return_value={'id': 42, 'app_id': 'com.apple.Terminal'}), \
+             patch.object(server, 'run_command') as run, \
+             patch.object(server.time, 'sleep'):
+            result = server.deliver_key('ctrl_enter', 'auto', text)
+        self.assertEqual(result['backend'], 'macos')
+        self.assertEqual(result['paste_mode'], 'normal')
+        self.assertEqual(run.call_args_list[0].args[0], ['pbcopy'])
+        self.assertEqual(run.call_args_list[0].kwargs, {'input_data': text})
+        self.assertEqual(run.call_args_list[1].args[0], [
+            'osascript', '-e', 'tell application "System Events" to key code 9 using command down'])
+        self.assertEqual(run.call_args_list[2].args[0], [
+            'osascript', '-e', 'tell application "System Events" to key code 36 using control down'])
+        self.assertEqual(len(run.call_args_list), 3)
+
+    def test_standalone_keys_need_no_clipboard_and_keep_control_semantics(self):
+        for key, action in [('enter', 'key code 36'), ('ctrl_enter', 'key code 36 using control down')]:
+            with self.subTest(key=key), \
+                 patch.object(server.shutil, 'which', side_effect=lambda name: '/usr/bin/osascript' if name == 'osascript' else None), \
+                 patch.object(server, 'focused_window', return_value=None), \
+                 patch.object(server, 'run_command') as run:
+                server.deliver_key(key, 'auto')
+                run.assert_called_once_with(['osascript', '-e', f'tell application "System Events" to {action}'])
+
+    def test_missing_clipboard_stops_before_input(self):
+        with patch.object(server.shutil, 'which', side_effect=lambda name: None if name == 'pbcopy' else '/usr/bin/tool'), \
+             patch.object(server, 'run_command') as run:
+            with self.assertRaisesRegex(RuntimeError, 'pbcopy'):
+                server.deliver_key('enter', 'auto', '你好')
+            run.assert_not_called()
+
+    def test_pbcopy_uses_utf8_even_with_legacy_locale(self):
+        with patch.dict(server.os.environ, {'LC_ALL': 'C'}), \
+             patch.object(server.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)) as run:
+            server.run_command(['pbcopy'], input_data='你好 😀')
+            self.assertEqual(run.call_args.kwargs['env']['LC_ALL'], 'en_US.UTF-8')
+            self.assertEqual(run.call_args.kwargs['encoding'], 'utf-8')
+            self.assertEqual(run.call_args.kwargs['input'], '你好 😀')
+
+    def test_failed_return_after_paste_is_not_retried(self):
+        with patch.object(server.shutil, 'which', return_value='/usr/bin/tool'), \
+             patch.object(server, 'focused_window', return_value=None), \
+             patch.object(server.time, 'sleep'), \
+             patch.object(server, 'run_command', side_effect=[None, None, RuntimeError('denied')]) as run:
+            with self.assertRaisesRegex(RuntimeError, '已触发文字粘贴，但未确认回车结果'):
+                server.deliver_key('enter', 'auto', '你好')
+            self.assertEqual(run.call_count, 3)
+
+    def test_permission_error_is_actionable_and_does_not_retry_or_submit(self):
+        with patch.object(server.shutil, 'which', return_value='/usr/bin/tool'), \
+             patch.object(server, 'focused_window', return_value=None), \
+             patch.object(server, 'run_command', side_effect=[None, RuntimeError('not authorized (-1743)')]) as run:
+            with self.assertRaisesRegex(RuntimeError, '辅助功能.*自动化'):
+                server.deliver_key('enter', 'auto', 'hello')
+            self.assertEqual(run.call_count, 2)
+
+    def test_frontmost_app_uses_json_and_failure_is_optional(self):
+        target = {'id': 42, 'app_id': 'com.apple.Terminal', 'title': 'Terminal "test"\n窗口'}
+        with patch.object(server.shutil, 'which', return_value='/usr/bin/osascript'), \
+             patch.object(server.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, json.dumps(target))) as run:
+            self.assertEqual(server.focused_window(), target)
+            self.assertEqual(run.call_args.args[0][:3], ['osascript', '-l', 'JavaScript'])
+            self.assertIn('NSWorkspace', run.call_args.args[0][-1])
+        with patch.object(server.shutil, 'which', return_value='/usr/bin/osascript'), \
+             patch.object(server.subprocess, 'run', side_effect=subprocess.TimeoutExpired('osascript', 2)):
+            self.assertIsNone(server.focused_window())
+
+
 class HttpTests(unittest.TestCase):
+    def setUp(self):
+        platform = patch.object(server.sys, 'platform', 'linux')
+        platform.start()
+        self.addCleanup(platform.stop)
+
     def test_routes_and_input_validation(self):
         httpd = server.ThreadingHTTPServer(('127.0.0.1', 0), server.Handler)
         httpd.backend = 'auto'
@@ -135,6 +233,14 @@ class HttpTests(unittest.TestCase):
             response = conn.getresponse()
             self.assertEqual(response.getheader('Cache-Control'), 'no-store')
             self.assertTrue(json.loads(response.read())['ok'])
+            with patch.object(server.sys, 'platform', 'darwin'), \
+                 patch.object(server, 'focused_window', return_value=None), \
+                 patch.object(server.shutil, 'which', side_effect=lambda tool: '/usr/bin/' + tool if tool in ('osascript', 'pbcopy') else None):
+                conn.request('GET', '/api/status')
+                response = conn.getresponse()
+                data = json.loads(response.read())
+                self.assertEqual(data['backend'], 'macos')
+                self.assertTrue(data['clipboard'])
             for payload in ({'text': ''}, {'text': '\ud800'}, {'text': '\x00'}, [], {'text': 'hi', 'paste_mode': []}):
                 conn.request('POST', '/api/send', json.dumps(payload))
                 response = conn.getresponse()
