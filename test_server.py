@@ -44,6 +44,57 @@ class DeliveryTests(unittest.TestCase):
         emit.assert_called_once_with('wtype', 'terminal')
         self.assertTrue(result['ok'])
 
+    def test_key_delivery_on_both_backends_without_clipboard(self):
+        commands = {
+            ('wtype', 'enter'): ['wtype', '-k', 'Return'],
+            ('wtype', 'ctrl_enter'): ['wtype', '-M', 'ctrl', '-k', 'Return', '-m', 'ctrl'],
+            ('ydotool', 'enter'): ['ydotool', 'key', '28:1', '28:0'],
+            ('ydotool', 'ctrl_enter'): ['ydotool', 'key', '29:1', '28:1', '28:0', '29:0'],
+        }
+        for (backend, key), command in commands.items():
+            with self.subTest(backend=backend, key=key), \
+                 patch.object(server.shutil, 'which', side_effect=lambda name: '/bin/' + name if name == backend else None), \
+                 patch.object(server, 'focused_window', return_value={'id': 1}), \
+                 patch.object(server, 'run_command') as run:
+                result = server.deliver_key(key, backend)
+                self.assertEqual(result['target'], {'id': 1})
+                run.assert_called_once_with(command)
+
+    def test_text_is_pasted_before_key_and_failure_stops_submission(self):
+        for key in ('enter', 'ctrl_enter'):
+            with self.subTest(key=key), \
+                 patch.object(server.shutil, 'which', return_value='/bin/tool'), \
+                 patch.object(server, 'focused_window', return_value={'id': 1, 'app_id': 'kitty'}), \
+                 patch.object(server, 'run_command') as run, \
+                 patch.object(server.time, 'sleep'):
+                server.deliver_key(key, 'wtype', '你好')
+                self.assertEqual(run.call_args_list[0].args[0][0], 'wl-copy')
+                self.assertEqual(run.call_args_list[0].kwargs['input_data'], '你好')
+                self.assertIn('shift', run.call_args_list[1].args[0])
+                self.assertIn('Return', run.call_args_list[2].args[0])
+                self.assertEqual(len(run.call_args_list), 3)
+                run.reset_mock()
+                with patch.object(server, 'emit_paste', side_effect=RuntimeError('paste failed')):
+                    with self.assertRaises(RuntimeError):
+                        server.deliver_key(key, 'wtype', '你好')
+                run.assert_called_once()
+
+    def test_key_validation_and_failures_do_not_send_again(self):
+        for key in (None, '', 'tab', [], {}):
+            with self.subTest(key=key), patch.object(server, 'run_command') as run:
+                with self.assertRaises(ValueError):
+                    server.deliver_key(key, 'auto')
+                run.assert_not_called()
+        with patch.object(server.shutil, 'which', return_value=None):
+            with self.assertRaises(RuntimeError):
+                server.deliver_key('enter', 'auto')
+        with patch.object(server.shutil, 'which', return_value='/bin/tool'), \
+             patch.object(server, 'focused_window', return_value=None), \
+             patch.object(server, 'run_command', side_effect=RuntimeError('failed')) as run:
+            with self.assertRaises(RuntimeError):
+                server.deliver_key('ctrl_enter', 'auto')
+            run.assert_called_once()
+
     def test_failed_paste_is_not_retried(self):
         with patch.object(server.shutil, 'which', return_value='/bin/tool'), \
              patch.object(server, 'focused_window', return_value=None), \
@@ -95,6 +146,24 @@ class HttpTests(unittest.TestCase):
                 self.assertEqual(response.status, 200)
                 self.assertTrue(json.loads(response.read())['ok'])
                 deliver.assert_called_once_with('你好', 'auto', 'auto')
+            for payload in ({}, {'key': 'tab'}, {'key': []}, {'key': 'enter', 'text': []}, {'key': 'enter', 'text': '\x00'}, []):
+                conn.request('POST', '/api/key', json.dumps(payload))
+                response = conn.getresponse()
+                self.assertEqual(response.status, 400)
+                response.read()
+            for key in ('enter', 'ctrl_enter'):
+                with patch.object(server, 'deliver_key', return_value={'ok': True}) as deliver_key:
+                    conn.request('POST', '/api/key', json.dumps({'key': key}))
+                    response = conn.getresponse()
+                    self.assertEqual(response.status, 200)
+                    self.assertTrue(json.loads(response.read())['ok'])
+                    deliver_key.assert_called_once_with(key, 'auto', '')
+            with patch.object(server, 'deliver_key', return_value={'ok': True}) as deliver_key:
+                conn.request('POST', '/api/key', json.dumps({'key': 'enter', 'text': '你好'}))
+                response = conn.getresponse()
+                self.assertEqual(response.status, 200)
+                response.read()
+                deliver_key.assert_called_once_with('enter', 'auto', '你好')
             conn.close()
         finally:
             httpd.shutdown()

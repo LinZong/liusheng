@@ -38,7 +38,7 @@
     .clear svg { display:block; width:18px; height:18px; }
     .clear:focus-visible { outline:2px solid var(--blue); }
     .clear[hidden] { display:none; }
-    .bottom { display:flex; flex-shrink:0; flex-direction:column; gap:12px; }
+    .bottom { display:flex; flex-shrink:0; flex-direction:column; gap:8px; }
     .status { display:flex; align-items:center; gap:7px; min-height:18px; padding-left:2px; color:#8792a2; font-size:12px; line-height:18px; overflow-wrap:anywhere; }
     .status svg { width:14px; height:14px; flex:none; }
     .status.ready { color:#788596; }
@@ -48,16 +48,21 @@
     .status.sending { color:var(--blue); }
     .status .spinner { width:12px; height:12px; border:2px solid #c4d2f7; border-top-color:var(--blue); border-radius:50%; animation:spin .8s linear infinite; }
     @keyframes spin { to { transform:rotate(360deg); } }
-    .send { width:100%; min-height:58px; padding:12px 20px; display:flex; justify-content:center; align-items:center; gap:10px; border:0; border-radius:15px; background:var(--blue); color:white; font-size:16px; font-weight:650; cursor:pointer; transition:background .15s,transform .15s; }
-    .send:active { transform:scale(.99); background:var(--blue-pressed); }
-    .send:disabled { opacity:.46; cursor:default; transform:none; }
-    .send svg { width:19px; height:19px; }
+    .primary-action { min-width:0; min-height:48px; padding:10px 12px; display:flex; justify-content:center; align-items:center; gap:6px; border:0; border-radius:12px; background:var(--blue); color:white; font-size:16px; font-weight:650; cursor:pointer; transition:background .15s,transform .15s; }
+    .primary-action:active { transform:scale(.99); background:var(--blue-pressed); }
+    .primary-action:disabled { opacity:.46; cursor:default; transform:none; }
+    .key-actions { display:grid; grid-template-columns:52px minmax(0,1fr) 52px; gap:8px; }
+    .key-action { min-width:0; min-height:48px; padding:10px 8px; font-size:14px; white-space:nowrap; border:1px solid var(--line); border-radius:12px; background:white; color:#566276; cursor:pointer; }
+    .key-action svg { display:block; width:22px; height:22px; margin:auto; }
+    .key-action:active { background:#eef1f6; }
+    .key-action:disabled { opacity:.46; cursor:default; }
+    .primary-action:focus-visible, .key-action:focus-visible { outline:2px solid var(--blue); outline-offset:2px; }
     @media(min-width:600px) { .app { padding:38px 28px; } }
     .compact-viewport .app { gap:8px; padding-top:calc(env(safe-area-inset-top) + 10px); padding-bottom:calc(env(safe-area-inset-bottom) + 10px); }
     .compact-viewport header { margin-bottom:0; }
     .compact-viewport .target { padding-top:6px; padding-bottom:6px; }
     .compact-viewport .bottom { gap:8px; }
-    .compact-viewport .send { min-height:48px; }
+    .compact-viewport .primary-action, .compact-viewport .key-action { min-height:44px; padding-top:8px; padding-bottom:8px; }
     .compact-viewport textarea { padding-top:10px; }
     @media(prefers-reduced-motion:reduce) { * { animation-duration:.01ms!important; transition-duration:.01ms!important; } }
   </style>
@@ -79,10 +84,15 @@
     </div>
     <div class="bottom">
       <div id="status" class="status ready" role="status" aria-live="polite"><span id="statusIcon" aria-hidden="true">○</span><span id="statusText">等待输入</span></div>
-      <button id="send" class="send" type="button" disabled>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4 20-7ZM11 13 22 2"/></svg>
-        <span id="sendText">发送</span>
-      </button>
+      <div class="key-actions" role="group" aria-label="发送与按键">
+        <button id="send" class="key-action" type="button" aria-label="发送" title="发送文字" disabled>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4 20-7ZM11 13 22 2"/></svg>
+        </button>
+        <button id="enter" class="primary-action" type="button" disabled>回车 ↵</button>
+        <button id="ctrlEnter" class="key-action" type="button" aria-label="Ctrl+回车" title="发送文字并按 Ctrl+回车" disabled>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 8 3-4 3 4M20 5v8a3 3 0 0 1-3 3H5m5-5-5 5 5 5"/></svg>
+        </button>
+      </div>
     </div>
   </main>
   <script>
@@ -110,11 +120,13 @@
       updateViewport();
 
       const $ = (id) => document.getElementById(id);
-      const draft = $('draft'), send = $('send'), sendText = $('sendText');
+      const draft = $('draft'), send = $('send');
       const connection = $('connection'), connectionText = $('connectionText');
       const target = $('target'), targetName = $('targetName');
       const status = $('status'), statusText = $('statusText'), statusIcon = $('statusIcon');
       const clear = $('clear');
+      const enter = $('enter'), ctrlEnter = $('ctrlEnter');
+      let keyReady = false;
       let ready = false, sending = false, delivery = null, connectionProblem = '连接中';
       const knownApps = [
         [/code(-oss)?|vscodium|visual studio code/i, 'VS Code'],
@@ -141,6 +153,7 @@
       }
 
       function update() {
+        enter.disabled = ctrlEnter.disabled = sending || !keyReady || (Boolean(draft.value.trim()) && !ready);
         send.disabled = sending || !ready || !draft.value.trim();
         clear.hidden = !draft.value.length;
         try { localStorage.setItem('li-draft', draft.value); } catch (_) {}
@@ -186,6 +199,7 @@
         try {
           const { response:res, data } = await timedFetch('/api/status', { cache:'no-store' }, 3500);
           if (!res.ok) throw Error('offline');
+          keyReady = Boolean(data.backend);
           ready = Boolean(data.clipboard && data.backend);
           connectionProblem = ready ? '' : 'Linux 缺少输入组件';
           connection.className = 'connection ' + (ready ? 'ok' : 'bad');
@@ -193,6 +207,7 @@
           updateTarget(data.target);
         } catch (_) {
           ready = false;
+          keyReady = false;
           connectionProblem = 'Linux 连接已断开';
           connection.className = 'connection bad';
           connectionText.textContent = '未连接';
@@ -205,7 +220,7 @@
         if (sending || !ready || !draft.value.trim()) return;
         sending = true;
         delivery = null;
-        sendText.textContent = '发送中…';
+        send.setAttribute('aria-busy', 'true');
         setStatus('sending', '正在发送到 Linux…');
         update();
         const content = draft.value;
@@ -222,10 +237,36 @@
           delivery = { error:true, text:'未确认发送结果 · 请先检查 Linux 输入框，再决定是否重试（' + (err.message || '连接异常') + '）' };
         } finally {
           sending = false;
-          sendText.textContent = '发送';
+          send.removeAttribute('aria-busy');
           update();
         }
       });
+
+      async function sendKey(key, label) {
+        if (sending || !keyReady || (draft.value.trim() && !ready)) return;
+        const content = draft.value.trim() ? draft.value : '';
+        sending = true;
+        delivery = null;
+        update();
+        setStatus('sending', content ? '正在发送文字并触发 ' + label + '…' : '正在发送 ' + label + '…');
+        try {
+          const { response:res, data:result } = await timedFetch('/api/key', {
+            method:'POST', headers:{ 'Content-Type':'application/json' },
+            body:JSON.stringify({ key, text:content })
+          }, 20000);
+          if (!res.ok || !result.ok) throw Error(result.message || '按键发送失败');
+          if (content && draft.value === content) draft.value = '';
+          delivery = { error:false, text:content ? '已发送文字并触发 Linux ' + label : '已发送 · 已触发 Linux ' + label };
+          if (result.target) updateTarget(result.target);
+        } catch (err) {
+          delivery = { error:true, text:'未确认发送结果 · 请先检查 Linux 输入框，再决定是否重试（' + (err.message || '连接异常') + '）' };
+        } finally {
+          sending = false;
+          update();
+        }
+      }
+      enter.addEventListener('click', () => sendKey('enter', '回车'));
+      ctrlEnter.addEventListener('click', () => sendKey('ctrl_enter', 'Ctrl+回车'));
 
       if ('serviceWorker' in navigator && window.isSecureContext) {
         window.addEventListener('load', () => {

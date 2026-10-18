@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -25,7 +26,7 @@ STATIC_FILES = {
 }
 MAX_BODY = 256 * 1024
 MAX_TEXT = 64_000
-PASTE_LOCK = threading.Lock()
+INPUT_LOCK = threading.Lock()
 TERMINAL_APP_IDS = (
     "foot", "alacritty", "kitty", "ghostty", "wezterm", "konsole",
     "gnome-terminal", "gnome.console", "org.gnome.console", "xterm",
@@ -106,7 +107,36 @@ def emit_paste(backend, mode):
         raise RuntimeError("请安装 wtype 或 ydotool")
 
 
-def deliver(text, paste_mode, configured_backend):
+def emit_key(backend, key):
+    if backend == "wtype":
+        command = (["wtype", "-M", "ctrl", "-k", "Return", "-m", "ctrl"]
+                   if key == "ctrl_enter" else ["wtype", "-k", "Return"])
+    else:
+        # Linux key codes: LEFTCTRL=29, ENTER=28
+        command = (["ydotool", "key", "29:1", "28:1", "28:0", "29:0"]
+                   if key == "ctrl_enter" else ["ydotool", "key", "28:1", "28:0"])
+    # Never retry: a failure can occur after the target received the key.
+    run_command(command)
+
+
+def deliver_key(key, configured_backend, text=""):
+    if key not in ("enter", "ctrl_enter"):
+        raise ValueError("无效的按键")
+    if not isinstance(text, str):
+        raise ValueError("无效的文字")
+    if text:
+        return deliver(text, "auto", configured_backend, after_key=key)
+    backend = get_backend(configured_backend)
+    if backend is None:
+        raise RuntimeError("未安装输入工具：请安装 wtype（或备用 ydotool）")
+    with INPUT_LOCK:
+        target = focused_window()
+        emit_key(backend, key)
+    return {"ok": True, "backend": backend, "key": key, "target": target,
+            "message": "已发送按键（无法确认目标应用是否响应）"}
+
+
+def deliver(text, paste_mode, configured_backend, *, after_key=None):
     if not text:
         raise ValueError("不能发送空文本")
     if len(text) > MAX_TEXT:
@@ -124,12 +154,19 @@ def deliver(text, paste_mode, configured_backend):
     if backend is None:
         raise RuntimeError("未安装输入工具：请安装 wtype（或备用 ydotool）")
 
-    with PASTE_LOCK:
+    with INPUT_LOCK:
         target = focused_window()
         detected = paste_shortcut((target or {}).get("app_id"), paste_mode)
         run_command(["wl-copy", "--type", "text/plain;charset=utf-8"], input_data=text)
         # A failure may follow partial execution; don't risk pasting twice.
         emit_paste(backend, detected)
+        if after_key:
+            # Give the target time to consume the clipboard before submitting.
+            time.sleep(0.15)
+            try:
+                emit_key(backend, after_key)
+            except RuntimeError as exc:
+                raise RuntimeError(f"已触发文字粘贴，但未确认回车结果：{exc}") from exc
 
     return {"ok": True, "backend": backend, "paste_mode": detected,
             "target": target, "message": "已发送粘贴快捷键（无法确认目标应用是否实际插入）"}
@@ -167,7 +204,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"ok": False, "message": "未找到页面"}, 404)
 
     def do_POST(self):
-        if self.path != "/api/send":
+        if self.path not in ("/api/send", "/api/key"):
             return self.send_json({"ok": False, "message": "未找到接口"}, 404)
         try:
             length = int(self.headers.get("Content-Length", "0"))
@@ -177,7 +214,12 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json({"ok": False, "message": "请求大小不合法"}, 413)
         try:
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
-            if not isinstance(payload, dict) or not isinstance(payload.get("text"), str):
+            if not isinstance(payload, dict):
+                raise ValueError("请求格式错误")
+            if self.path == "/api/key":
+                result = deliver_key(payload.get("key"), self.server.backend, payload.get("text", ""))
+                return self.send_json(result)
+            if not isinstance(payload.get("text"), str):
                 raise ValueError("缺少文字")
             mode = payload.get("paste_mode", "auto")
             if mode not in ("auto", "normal", "terminal"):
