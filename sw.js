@@ -1,5 +1,5 @@
 const CACHE_PREFIX = 'liusheng-shell-';
-const CACHE_NAME = CACHE_PREFIX + 'v7';
+const CACHE_NAME = CACHE_PREFIX + 'v8';
 const SHELL = [
   '/', '/manifest.webmanifest', '/icons/icon.svg',
   '/icons/icon-192.png', '/icons/icon-512.png',

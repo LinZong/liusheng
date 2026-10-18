@@ -30,6 +30,11 @@
     .target-label { color:#8994a5; white-space:nowrap; }
     .target-name { font-weight:600; color:#566276; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
     .target.unavailable .target-name { font-weight:400; color:#9ba4b2; }
+    .quick-texts { display:flex; flex-shrink:0; gap:8px; }
+    .quick-text { min-height:44px; padding:8px 14px; border:1px solid var(--line); border-radius:22px; background:white; color:#566276; font-size:14px; white-space:nowrap; cursor:pointer; }
+    .quick-text:active { background:#eef1f6; }
+    .quick-text:disabled { opacity:.46; cursor:default; }
+    .quick-text:focus-visible { outline:2px solid var(--blue); outline-offset:2px; }
     .editor { position:relative; display:flex; flex:1; min-height:0; overflow:hidden; background:white; border:1px solid var(--line); border-radius:18px; transition:border-color .15s,box-shadow .15s; }
     .editor:focus-within { border-color:#acc0fb; box-shadow:0 0 0 3px #4169e10d; }
     textarea { flex:1; min-width:0; width:100%; min-height:0; padding:19px 19px 52px; resize:none; outline:none; border:0; background:transparent; color:var(--ink); font-size:17px; line-height:1.7; }
@@ -63,6 +68,7 @@
     .compact-viewport .target { padding-top:6px; padding-bottom:6px; }
     .compact-viewport .bottom { gap:8px; }
     .compact-viewport .primary-action, .compact-viewport .key-action { min-height:44px; padding-top:8px; padding-bottom:8px; }
+    .compact-viewport .quick-text { min-height:36px; padding-top:6px; padding-bottom:6px; }
     .compact-viewport textarea { padding-top:10px; }
     @media(prefers-reduced-motion:reduce) { * { animation-duration:.01ms!important; transition-duration:.01ms!important; } }
   </style>
@@ -77,6 +83,11 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 21h8M12 18v3"/></svg>
       <span class="target-label">当前目标</span>
       <span id="targetName" class="target-name">检测中…</span>
+    </div>
+    <div class="quick-texts" role="group" aria-label="常用文本">
+      <button class="quick-text" type="button" data-text="确定" title="发送“确定”并回车" disabled>确定</button>
+      <button class="quick-text" type="button" data-text="推送代码" title="发送“推送代码”并回车" disabled>推送代码</button>
+      <button class="quick-text" type="button" data-text="创建 PR" title="发送“创建 PR”并回车" disabled>创建 PR</button>
     </div>
     <div class="editor">
       <textarea id="draft" aria-label="输入文字" placeholder="输入文字…" maxlength="64000" spellcheck="false"></textarea>
@@ -126,6 +137,7 @@
       const status = $('status'), statusText = $('statusText'), statusIcon = $('statusIcon');
       const clear = $('clear');
       const enter = $('enter'), ctrlEnter = $('ctrlEnter');
+      const quickTexts = [...document.querySelectorAll('.quick-text')];
       let keyReady = false;
       let ready = false, sending = false, delivery = null, connectionProblem = '连接中';
       const knownApps = [
@@ -153,6 +165,7 @@
       }
 
       function update() {
+        quickTexts.forEach(button => { button.disabled = sending || !ready; });
         enter.disabled = ctrlEnter.disabled = sending || !keyReady || (Boolean(draft.value.trim()) && !ready);
         send.disabled = sending || !ready || !draft.value.trim();
         clear.hidden = !draft.value.length;
@@ -242,9 +255,9 @@
         }
       });
 
-      async function sendKey(key, label) {
-        if (sending || !keyReady || (draft.value.trim() && !ready)) return;
-        const content = draft.value.trim() ? draft.value : '';
+      async function sendKey(key, label, quickText = null) {
+        const content = quickText ?? (draft.value.trim() ? draft.value : '');
+        if (sending || !keyReady || (content && !ready)) return;
         sending = true;
         delivery = null;
         update();
@@ -255,7 +268,7 @@
             body:JSON.stringify({ key, text:content })
           }, 20000);
           if (!res.ok || !result.ok) throw Error(result.message || '按键发送失败');
-          if (content && draft.value === content) draft.value = '';
+          if (quickText === null && content && draft.value === content) draft.value = '';
           delivery = { error:false, text:content ? '已发送文字并触发 Linux ' + label : '已发送 · 已触发 Linux ' + label };
           if (result.target) updateTarget(result.target);
         } catch (err) {
@@ -265,6 +278,9 @@
           update();
         }
       }
+      quickTexts.forEach(button => {
+        button.addEventListener('click', () => sendKey('enter', '回车', button.dataset.text));
+      });
       enter.addEventListener('click', () => sendKey('enter', '回车'));
       ctrlEnter.addEventListener('click', () => sendKey('ctrl_enter', 'Ctrl+回车'));
 
